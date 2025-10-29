@@ -2,10 +2,8 @@
 # This file basically connects to a server with the host name
 # 6856-web-01, the private key located at ~/.ssh/school,
 # and the user name ubuntu.
-PRIVATE_KEY="~/.ssh/school"
-
 USER_NAME="ubuntu"
 
 HOST="6856-web-01"
 
-ssh -i "$PRIVATE_KEY" "$USER_NAME@HOST"
+ssh -i "~/.ssh/school" "$USER_NAME@HOST"
