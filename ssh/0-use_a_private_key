@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-
+# This file basically connects to a server with the host name
+# 6856-web-01, the private key located at ~/.ssh/school,
+# and the user name ubuntu.
 PRIVATE_KEY="~/.ssh/school"
 
 USER_NAME="ubuntu"
