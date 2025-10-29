@@ -1,0 +1,9 @@
+#!/usr/bin/env python
+
+PRIVATE_KEY="~/.ssh/school"
+
+USER_NAME="ubuntu"
+
+HOST="6856-web-01"
+
+ssh -i "$PRIVATE_KEY" "$USER_NAME@HOST"
