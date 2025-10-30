@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#This bash script creates an RSA key pair that IS 4096 bit, is 
+# has a password of betty and has the privated ans public key saved
+# as school and schoo.pub respectively
+ssh keygen -t rsa -b 4096 -f school -N "betty"
