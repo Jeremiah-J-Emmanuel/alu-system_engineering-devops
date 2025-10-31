@@ -2,4 +2,4 @@
 #This bash script creates an RSA key pair that IS 4096 bit, is 
 # has a password of betty and has the privated ans public key saved
 # as school and schoo.pub respectively
-ssh-keygen -t rsa -b 4096 -N betty -f school
+ssh 591462bdd080@591462bdd080.adbaf930.alu-cod.online -t rsa -b 4096 -N betty -f "Emmanuel"
