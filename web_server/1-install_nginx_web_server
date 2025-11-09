@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install and configure Nginx to return a specific content
 
-apt-get update -y
+apt-get update -y44.201.149.95
 apt-get install -y nginx
 
 echo "Holberton School for the win!" > /var/www/html/index.html
