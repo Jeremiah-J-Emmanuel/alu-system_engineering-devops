@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Configure Nginx to serve a page and redirect /redirect_me wit>
+
+apt-get update -y
+apt-get install -y nginx
+
+echo "Holberton School for the win!" > /var/www/html/index.html
+
+# Only add the redirect block if it doesn't already exist
+if ! grep -q "location /redirect_me" /etc/nginx/sites-available>
+    sed -i "/server_name _;/a \\\n\tlocation /redirect_me {\n\t>
+fi
+
+service nginx restart
