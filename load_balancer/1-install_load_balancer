@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# 1-install_load_balancer
+# Installs HAProxy and configures a round-robin backend between two web servers.
+# Usage:
+#   ./1-install_load_balancer WEB1_IP WEB2_IP [LB_IP_FOR_TEST]
+# Or set environment variables WEB1_IP and WEB2_IP before running.
+# Runs in container environments (no systemd) and falls back to daemonizing HAProxy.
+
+set -euo pipefail
+
+# --- Fetch IPs from args or environment ---
+if [ "${#}" -ge 2 ]; then
+  WEB1_IP="$1"
+  WEB2_IP="$2"
+  LB_TEST_IP="${3:-}"   # optional 3rd arg for quick test (load balancer IP)
+else
+  WEB1_IP="${WEB1_IP:-}"
+  WEB2_IP="${WEB2_IP:-}"
+  LB_TEST_IP="${LB_TEST_IP:-}"
+fi
+
+if [ -z "$WEB1_IP" ] || [ -z "$WEB2_IP" ]; then
+  cat <<EOF
+ERROR: You must provide backend IPs.
+Usage: ./1-install_load_balancer WEB1_IP WEB2_IP [LB_IP_FOR_TEST]
+Or set environment variables WEB1_IP and WEB2_IP.
+EOF
+  exit 1
+fi
+
+echo "Using WEB1=$WEB1_IP  WEB2=$WEB2_IP"
+
+# --- Install HAProxy ---
+apt-get update -y
+DEBIAN_FRONTEND=noninteractive apt-get install -y haproxy
+
+# --- Backup existing config ---
+HAP_CFG=/etc/haproxy/haproxy.cfg
+if [ -f "${HAP_CFG}" ] && [ ! -f "${HAP_CFG}.bak" ]; then
+  cp "${HAP_CFG}" "${HAP_CFG}.bak"
+  echo "Backed up original ${HAP_CFG} -> ${HAP_CFG}.bak"
+fi
+
+# --- Write new HAProxy config ---
+cat > "${HAP_CFG}" <<EOF
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    daemon
+    maxconn 2000
+
+defaults
+    log global
+    mode http
+    option httplog
+    option dontlognull
+    timeout connect 5000ms
+    timeout client 50000ms
+    timeout server 50000ms
+
+frontend http_front
+    bind *:80
+    default_backend web_servers
+
+backend web_servers
+    balance roundrobin
+    # health checks enabled
+    server web01 ${WEB1_IP}:80 check
+    server web02 ${WEB2_IP}:80 check
+EOF
+
+echo "Wrote HAProxy config to ${HAP_CFG}"
+
+# --- Validate configuration ---
+echo "Validating HAProxy configuration..."
+haproxy -c -f "${HAP_CFG}"
+
+# --- Start HAProxy ---
+# If systemd is available and PID 1 is systemd, use systemctl, else daemonize directly.
+if [ "$(ps -p 1 -o comm=)" = "systemd" ] && command -v systemctl >/dev/null 2>&1; then
+  echo "systemd detected: enabling and starting haproxy with systemctl"
+  systemctl enable haproxy
+  systemctl restart haproxy
+else
+  echo "No systemd detected: starting haproxy manually (daemon mode)"
+  # Stop any existing haproxy started previously (best-effort)
+  pkill -f "haproxy: " || true
+  # Start haproxy as a daemon; -db = don't fork to background? (use -D for foreground; -db is backward compatible)
+  haproxy -f "${HAP_CFG}" -db
+fi
+
+# --- Give a moment and show status ---
+sleep 1
+echo "Processes:"
+ps aux | grep haproxy | grep -v grep || true
+
+# --- Quick sanity checks (non-fatal) ---
+echo
+echo "Sanity checks (non-fatal):"
+echo "- curl to backend servers directly (should respond and include X-Served-By if configured on backends):"
+echo "  curl -Is http://${WEB1_IP} | head -n 10"
+echo "  curl -Is http://${WEB2_IP} | head -n 10"
+if [ -n "${LB_TEST_IP}" ]; then
+  echo
+  echo "- curl to load balancer (run multiple times to observe round-robin):"
+  echo "  for i in 1 2 3 4; do curl -sI http://${LB_TEST_IP} | grep X-Served-By || true; done"
+fi
+
+echo
+echo "Done. If you want the script to auto-test the LB, re-run with the LB IP as a 3rd argument."
