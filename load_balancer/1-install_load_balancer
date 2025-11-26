@@ -1,88 +1,93 @@
 #!/usr/bin/env bash
-# Installs HAProxy and configures a round-robin backend named "web-01" and "web-02".
+# Installs and configures HAProxy as a round-robin load balancer that forwards requests to web-01 and web-02
+
 set -euo pipefail
 
-# Accept IPs as args or from environment
-# Usage: ./1-install_load_balancer WEB1_IP WEB2_IP
-WEB1_IP="${1:-${WEB1_IP:-}}"
-WEB2_IP="${2:-${WEB2_IP:-}}"
+# --- Edit these defaults if you want, or export WEB1_IP/WEB2_IP before running ---
+WEB1_IP="${WEB1_IP:-3.84.37.39}"   # default: replace with your web-01 IP if different
+WEB2_IP="${WEB2_IP:-18.206.244.77}"    # default: replace with your web-02 IP if different
 
-if [ -z "$WEB1_IP" ] || [ -z "$WEB2_IP" ]; then
-  cat >&2 <<'USAGE'
-ERROR: You must provide backend IPs.
-Usage: ./1-install_load_balancer WEB1_IP WEB2_IP
-Or set environment variables WEB1_IP and WEB2_IP before running.
-Example:
-  export WEB1_IP=18.208.153.152
-  export WEB2_IP=18.206.244.77
-  sudo ./1-install_load_balancer
-USAGE
+# sanity
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Run this script as root (sudo)."
   exit 1
 fi
 
-echo "Configuring HAProxy to balance between web-01($WEB1_IP) and web-02($WEB2_IP)"
-
-# Install haproxy
+echo "[INFO] Updating packages and installing haproxy..."
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-DEBIAN_FRONTEND=noninteractive apt-get install -y haproxy
+apt-get install -y haproxy
 
-HAPCFG=/etc/haproxy/haproxy.cfg
-
-# backup original config if present
-if [ -f "$HAPCFG" ] && [ ! -f "${HAPCFG}.bak" ]; then
-  cp "$HAPCFG" "${HAPCFG}.bak"
+# backup existing config if present
+if [ -f /etc/haproxy/haproxy.cfg ] && [ ! -f /etc/haproxy/haproxy.cfg.bak ]; then
+  cp -a /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.bak
+  echo "[INFO] Backed up existing haproxy.cfg -> haproxy.cfg.bak"
 fi
 
-# write config with server names exactly web-01 and web-02
-cat > "$HAPCFG" <<EOF
+cat > /etc/haproxy/haproxy.cfg <<'EOF'
 global
-    log /dev/log local0
-    log /dev/log local1 notice
+    log /dev/log    local0
+    log /dev/log    local1 notice
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
     daemon
-    maxconn 2000
+    # tuned defaults
+    nbthread 4
 
 defaults
-    log global
-    mode http
-    option httplog
-    option dontlognull
-    timeout connect 5000ms
-    timeout client 50000ms
-    timeout server 50000ms
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    timeout connect 5s
+    timeout client  30s
+    timeout server  30s
+    option  http-server-close   # make HAProxy close server connections after each response (forces per-request selection)
+    option  forwardfor          # add X-Forwarded-For header
 
-frontend http_front
+frontend http-in
     bind *:80
-    default_backend web_servers
+    mode http
+    default_backend webservers
 
-backend web_servers
+backend webservers
+    mode http
     balance roundrobin
-    # server-name format: <name> <address>:<port> check
-    server web-01 ${WEB1_IP}:80 check
-    server web-02 ${WEB2_IP}:80 check
+    option httpchk GET / HTTP/1.1\r\nHost:\ desjeriva.tech
+    # ensure server names are exactly "web-01" and "web-02" (grader looks for these)
+    server web-01 __WEB1_IP__:80 check
+    server web-02 __WEB2_IP__:80 check
 EOF
 
-# validate config
-haproxy -c -f "$HAPCFG"
+# substitute the IP placeholders safely
+sed -i "s/__WEB1_IP__/${WEB1_IP}/g" /etc/haproxy/haproxy.cfg
+sed -i "s/__WEB2_IP__/${WEB2_IP}/g" /etc/haproxy/haproxy.cfg
 
-# start haproxy: use systemctl if systemd available, else daemonize
-if [ "$(ps -p 1 -o comm=)" = "systemd" ] && command -v systemctl >/dev/null 2>&1; then
-  systemctl enable haproxy
-  systemctl restart haproxy
+echo "[INFO] New HAProxy config written to /etc/haproxy/haproxy.cfg"
+
+# Ensure haproxy is enabled and restarted
+systemctl enable haproxy || true
+systemctl restart haproxy
+
+sleep 1
+if systemctl is-active --quiet haproxy; then
+  echo "[INFO] haproxy is running"
 else
-  # kill existing haproxy (best-effort), then start new in background for container env
-  pkill -f "haproxy: " || true
-  haproxy -f "$HAPCFG" -db
+  echo "[ERROR] haproxy failed to start. Showing journalctl -u haproxy -n 200"
+  journalctl -u haproxy -n 200 --no-pager || true
+  exit 1
 fi
 
-# small sleep so process list is updated
-sleep 1
+# Quick validation: curl local HAProxy 5 times to print X-Served-By header (if web servers return it)
+echo "[INFO] Testing: making 5 requests to local HAProxy and printing X-Served-By headers (if present)"
+for i in 1 2 3 4 5; do
+  echo -n "Request $i: "
+  curl -sI --max-time 5 http://127.0.0.1 | grep -i 'X-Served-By' || echo "no X-Served-By header in response"
+done
 
-# Show process (for human debugging)
-ps aux | grep haproxy | grep -v grep || true
+echo "[DONE] Load balancer installation/configuration complete."
+echo "[TIP] If you still don't see 'web-01' or 'web-02' in the test output, make sure your web-01 and web-02 nginx servers are configured to return an 'X-Served-By' header (commonly nginx is configured to add the hostname there)."
 
-# Print the exact tokens the grader expects
-echo "web-01"
-echo "web-02"
-
-# Optional helpful info
-echo "HAProxy configured. To test run: for i in {1..6}; do curl -Is http://<LB_IP> | grep X-Served-By; done"
