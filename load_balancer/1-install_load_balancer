@@ -14,8 +14,9 @@ frontend http_front
         default_backend http_back
 backend http_back
         balance roundrobin
-        server 6928-web-01 :80 check
-        server 6928-web-02 18.208.153.152:80 check
+        server 6928-web-01 18.208.153.152:80 check
+        server 6928-web-02 18.206.244.77:80 check
+18.206.244.77
 "
 echo "$server_config" | sudo tee -a /etc/haproxy/haproxy.cfg
 
